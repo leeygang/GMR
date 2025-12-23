@@ -24,6 +24,7 @@ dependencies = [
     "protobuf",
     "redis[hiredis]",
     "imageio[ffmpeg]",
+    "pyyaml>=6.0.3",
 ]
 
 [project.urls]
