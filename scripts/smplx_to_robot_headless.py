@@ -73,6 +73,12 @@ if __name__ == "__main__":
         default=30,
         help="Target FPS for the retargeted motion.",
     )
+    parser.add_argument(
+        "--ik_config",
+        type=str,
+        default=None,
+        help="Path to IK config JSON file (default: use robot's default config)",
+    )
 
     args = parser.parse_args()
 
@@ -99,6 +105,7 @@ if __name__ == "__main__":
         actual_human_height=actual_human_height,
         src_human="smplx",
         tgt_robot=args.robot,
+        ik_config_path=args.ik_config,
     )
 
     # Run retargeting

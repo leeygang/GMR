@@ -13,6 +13,9 @@ Usage:
     # Custom output directory
     uv run python scripts/batch_retarget_walking.py --output-dir ~/projects/wildrobot/playground_amp/data/gmr
 
+    # Custom IK config file
+    uv run python scripts/batch_retarget_walking.py --ik-config path/to/config.json
+
     # Force regenerate (overwrite existing)
     uv run python scripts/batch_retarget_walking.py --force
 """
@@ -34,20 +37,16 @@ WALKING_MOTIONS = [
     ("3/walking_medium02_stageii.npz", "walking_medium02"),
     ("3/walking_fast01_stageii.npz", "walking_fast01"),
     ("3/walking_fast02_stageii.npz", "walking_fast02"),
-
     # Subject 167 - different person
     ("167/walking_slow01_stageii.npz", "walking_slow03"),
     ("167/walking_medium01_stageii.npz", "walking_medium03"),
     ("167/walking_fast01_stageii.npz", "walking_fast03"),
-
     # Subject 183 - another person
     ("183/walking_slow01_stageii.npz", "walking_slow04"),
     ("183/walking_medium01_stageii.npz", "walking_medium04"),
-
     # Subject 317 - for more variety
     ("317/walking_slow01_stageii.npz", "walking_slow05"),
     ("317/walking_medium01_stageii.npz", "walking_medium05"),
-
     # Subject 359 - another style
     ("359/walking_slow01_stageii.npz", "walking_slow06"),
     ("359/walking_medium01_stageii.npz", "walking_medium06"),
@@ -63,6 +62,12 @@ def main():
         type=str,
         default=str(Path.home() / "projects/wildrobot/assets/motions"),
         help="Output directory for retargeted motion files",
+    )
+    parser.add_argument(
+        "--ik-config",
+        type=str,
+        default=None,
+        help="Path to IK config JSON file (default: use robot's default config)",
     )
     parser.add_argument(
         "--force",
@@ -109,11 +114,21 @@ def main():
 
         # Run retargeting
         cmd = [
-            "uv", "run", "python", "scripts/smplx_to_robot_headless.py",
-            "--smplx_file", str(source_path),
-            "--robot", "wildrobot",
-            "--save_path", str(output_path),
+            "uv",
+            "run",
+            "python",
+            "scripts/smplx_to_robot_headless.py",
+            "--smplx_file",
+            str(source_path),
+            "--robot",
+            "wildrobot",
+            "--save_path",
+            str(output_path),
         ]
+
+        # Add IK config if specified
+        if args.ik_config:
+            cmd.extend(["--ik_config", args.ik_config])
 
         try:
             result = subprocess.run(
@@ -149,12 +164,13 @@ def main():
     # Check total duration
     print("\nChecking total motion duration...")
     import pickle
+
     total_duration = 0
     for f in output_base.glob("*.pkl"):
         try:
-            with open(f, 'rb') as fp:
+            with open(f, "rb") as fp:
                 data = pickle.load(fp)
-            dur = data.get('duration_sec', data['num_frames'] / data['fps'])
+            dur = data.get("duration_sec", data["num_frames"] / data["fps"])
             total_duration += dur
         except:
             pass
