@@ -6,9 +6,18 @@ dataset for AMP training. Target: 50+ seconds of walking data.
 
 Usage:
     cd ~/projects/GMR
+
+    # Default output (assets/motions)
     uv run python scripts/batch_retarget_walking.py
+
+    # Custom output directory
+    uv run python scripts/batch_retarget_walking.py --output-dir ~/projects/wildrobot/playground_amp/data/gmr
+
+    # Force regenerate (overwrite existing)
+    uv run python scripts/batch_retarget_walking.py --force
 """
 
+import argparse
 import subprocess
 import sys
 from pathlib import Path
@@ -46,8 +55,24 @@ WALKING_MOTIONS = [
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Batch retarget walking motions from AMASS KIT to WildRobot"
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=str(Path.home() / "projects/wildrobot/assets/motions"),
+        help="Output directory for retargeted motion files",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force regenerate (overwrite existing files)",
+    )
+    args = parser.parse_args()
+
     amass_base = Path.home() / "projects/amass/smplx/KIT"
-    output_base = Path.home() / "projects/wildrobot/assets/motions"
+    output_base = Path(args.output_dir)
     gmr_dir = Path.home() / "projects/GMR"
 
     # Ensure output directory exists
@@ -62,14 +87,15 @@ def main():
     print(f"Source: {amass_base}")
     print(f"Output: {output_base}")
     print(f"Motions to process: {len(WALKING_MOTIONS)}")
+    print(f"Force overwrite: {args.force}")
     print(f"{'='*60}\n")
 
     for source_rel, output_name in WALKING_MOTIONS:
         source_path = amass_base / source_rel
         output_path = output_base / f"{output_name}.pkl"
 
-        # Skip if output already exists
-        if output_path.exists():
+        # Skip if output already exists (unless --force)
+        if output_path.exists() and not args.force:
             print(f"[SKIP] {output_name} - already exists")
             continue
 

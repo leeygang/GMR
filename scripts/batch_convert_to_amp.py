@@ -5,38 +5,53 @@ This script:
 1. Converts all GMR .pkl files to AMP 29-dim format
 2. Merges all AMP motions into a single dataset for training
 
+v0.9.3: Added FK-based contact estimation support.
 Joint order is loaded from robot_config.yaml (no hardcoding).
 
 Usage:
+    # Legacy (hip-pitch heuristic)
     cd ~/projects/GMR
     uv run python scripts/batch_convert_to_amp.py \
         --robot-config ~/projects/wildrobot/assets/robot_config.yaml
+
+    # With FK-based contacts (recommended)
+    cd ~/projects/GMR
+    uv run python scripts/batch_convert_to_amp.py \
+        --robot-config ~/projects/wildrobot/assets/robot_config.yaml \
+        --robot-model ~/projects/wildrobot/assets/scene_flat_terrain.xml
 """
 
 import argparse
 import pickle
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
-from rich import print
-from rich.table import Table
 
 # Import from existing script
-from convert_to_amp_format import convert_to_amp_format, load_robot_config, get_joint_names
+from convert_to_amp_format import (
+    convert_to_amp_format,
+    get_joint_names,
+    load_mujoco_model,
+    load_robot_config,
+)
+from rich import print
+from rich.table import Table
 
 
 def get_motion_duration(motion_path: Path) -> float:
     """Get duration of a motion file in seconds."""
-    with open(motion_path, 'rb') as f:
+    with open(motion_path, "rb") as f:
         data = pickle.load(f)
-    return data.get('duration_sec', data['num_frames'] / data['fps'])
+    return data.get("duration_sec", data["num_frames"] / data["fps"])
 
 
 def batch_convert_to_amp(
     input_dir: Path,
     output_dir: Path,
     target_fps: float = 50.0,
+    mj_model: Optional[Any] = None,
+    contact_height_threshold: float = 0.02,
 ) -> List[Path]:
     """Convert all GMR motions in input_dir to AMP format.
 
@@ -44,6 +59,8 @@ def batch_convert_to_amp(
         input_dir: Directory containing GMR .pkl files
         output_dir: Directory for AMP output files
         target_fps: Target FPS for AMP format
+        mj_model: Optional MuJoCo model for FK-based contact estimation
+        contact_height_threshold: Foot height threshold for contact (m)
 
     Returns:
         List of successfully converted AMP file paths
@@ -53,7 +70,10 @@ def batch_convert_to_amp(
     motion_files = sorted(input_dir.glob("*.pkl"))
     converted = []
 
-    print(f"\n[bold blue]Converting {len(motion_files)} motions to AMP format...[/bold blue]")
+    contact_method = "FK" if mj_model is not None else "heuristic"
+    print(
+        f"\n[bold blue]Converting {len(motion_files)} motions to AMP format ({contact_method} contacts)...[/bold blue]"
+    )
 
     for motion_path in motion_files:
         output_path = output_dir / f"{motion_path.stem}_amp.pkl"
@@ -66,17 +86,24 @@ def batch_convert_to_amp(
 
         try:
             # Load GMR motion
-            with open(motion_path, 'rb') as f:
+            with open(motion_path, "rb") as f:
                 motion_data = pickle.load(f)
 
-            # Convert to AMP format
-            amp_data = convert_to_amp_format(motion_data, target_fps=target_fps)
+            # Convert to AMP format (with optional FK-based contacts)
+            amp_data = convert_to_amp_format(
+                motion_data,
+                target_fps=target_fps,
+                mj_model=mj_model,
+                contact_height_threshold=contact_height_threshold,
+            )
 
             # Save AMP format
-            with open(output_path, 'wb') as f:
+            with open(output_path, "wb") as f:
                 pickle.dump(amp_data, f)
 
-            print(f"  [green]✓[/green] {motion_path.name} -> {output_path.name} ({amp_data['duration_sec']:.2f}s, {amp_data['num_frames']} frames)")
+            print(
+                f"  [green]✓[/green] {motion_path.name} -> {output_path.name} ({amp_data['duration_sec']:.2f}s, {amp_data['num_frames']} frames)"
+            )
             converted.append(output_path)
 
         except Exception as e:
@@ -110,42 +137,41 @@ def merge_amp_motions(
     print(f"\n[bold blue]Merging {len(amp_files)} AMP motions...[/bold blue]")
 
     for amp_path in amp_files:
-        with open(amp_path, 'rb') as f:
+        with open(amp_path, "rb") as f:
             data = pickle.load(f)
 
-        all_features.append(data['features'])
-        all_dof_pos.append(data['dof_pos'])
-        all_dof_vel.append(data['dof_vel'])
+        all_features.append(data["features"])
+        all_dof_pos.append(data["dof_pos"])
+        all_dof_vel.append(data["dof_vel"])
         source_files.append(str(amp_path.name))
-        total_duration += data['duration_sec']
+        total_duration += data["duration_sec"]
 
-        print(f"  + {amp_path.name}: {data['num_frames']} frames, {data['duration_sec']:.2f}s")
+        print(
+            f"  + {amp_path.name}: {data['num_frames']} frames, {data['duration_sec']:.2f}s"
+        )
 
     # Concatenate all arrays
     merged = {
         # Main AMP features for discriminator
-        'features': np.concatenate(all_features, axis=0).astype(np.float32),
-        'feature_dim': 29,
-
+        "features": np.concatenate(all_features, axis=0).astype(np.float32),
+        "feature_dim": 29,
         # Additional data for debugging/analysis
-        'dof_pos': np.concatenate(all_dof_pos, axis=0).astype(np.float32),
-        'dof_vel': np.concatenate(all_dof_vel, axis=0).astype(np.float32),
-
+        "dof_pos": np.concatenate(all_dof_pos, axis=0).astype(np.float32),
+        "dof_vel": np.concatenate(all_dof_vel, axis=0).astype(np.float32),
         # Metadata
-        'fps': 50.0,
-        'dt': 0.02,
-        'num_frames': sum(len(f) for f in all_features),
-        'duration_sec': total_duration,
-        'source_files': source_files,
-        'num_motions': len(amp_files),
-
+        "fps": 50.0,
+        "dt": 0.02,
+        "num_frames": sum(len(f) for f in all_features),
+        "duration_sec": total_duration,
+        "source_files": source_files,
+        "num_motions": len(amp_files),
         # Joint info from robot_config.yaml (no hardcoding)
-        'joint_names': get_joint_names(),
+        "joint_names": get_joint_names(),
     }
 
     # Save merged dataset
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, 'wb') as f:
+    with open(output_path, "wb") as f:
         pickle.dump(merged, f)
 
     print(f"\n[bold green]Merged dataset saved to:[/bold green] {output_path}")
@@ -155,7 +181,7 @@ def merge_amp_motions(
 
 def print_dataset_summary(merged: Dict[str, Any]):
     """Print summary statistics of the merged dataset."""
-    features = merged['features']
+    features = merged["features"]
 
     table = Table(title="Merged AMP Dataset Summary")
     table.add_column("Property", style="cyan")
@@ -163,9 +189,9 @@ def print_dataset_summary(merged: Dict[str, Any]):
 
     table.add_row("Total Frames", f"{merged['num_frames']:,}")
     table.add_row("Total Duration", f"{merged['duration_sec']:.2f}s")
-    table.add_row("Number of Motions", str(merged['num_motions']))
-    table.add_row("Feature Dimension", str(merged['feature_dim']))
-    table.add_row("FPS", str(merged['fps']))
+    table.add_row("Number of Motions", str(merged["num_motions"]))
+    table.add_row("Feature Dimension", str(merged["feature_dim"]))
+    table.add_row("FPS", str(merged["fps"]))
     table.add_row("Features Shape", str(features.shape))
 
     print(table)
@@ -211,6 +237,18 @@ def main():
         help="Path to robot_config.yaml (required for joint order)",
     )
     parser.add_argument(
+        "--robot-model",
+        type=str,
+        default=None,
+        help="Path to MuJoCo XML model for FK-based contact estimation (v0.9.3)",
+    )
+    parser.add_argument(
+        "--contact-threshold",
+        type=float,
+        default=0.02,
+        help="Foot height threshold for contact detection (m), default=0.02",
+    )
+    parser.add_argument(
         "--input-dir",
         type=str,
         default=str(Path.home() / "projects/wildrobot/assets/motions"),
@@ -234,26 +272,52 @@ def main():
         default=50.0,
         help="Target FPS for AMP format",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force reconversion even if output files exist",
+    )
 
     args = parser.parse_args()
 
     # Load robot config first (required for joint order)
     print(f"[bold blue]Loading robot config:[/bold blue] {args.robot_config}")
     config = load_robot_config(args.robot_config)
-    joint_names = config['actuators']['joints']
+    joint_names = config["actuators"]["joints"]
     print(f"  Joint order: {joint_names}")
+
+    # Load MuJoCo model if provided (for FK-based contacts)
+    mj_model = None
+    if args.robot_model:
+        print(f"[bold blue]Loading MuJoCo model:[/bold blue] {args.robot_model}")
+        mj_model = load_mujoco_model(args.robot_model)
+        if mj_model is not None:
+            print(f"  [green]✓ Model loaded successfully[/green]")
+        else:
+            print(
+                f"  [yellow]⚠ Failed to load model, will use heuristic contacts[/yellow]"
+            )
 
     # Paths
     gmr_motion_dir = Path(args.input_dir)
     amp_output_dir = Path(args.output_dir)
     merged_output = amp_output_dir / args.merged_output
 
+    # Handle --force: remove existing AMP files to force reconversion
+    if args.force:
+        print("[yellow]--force: Removing existing AMP files for reconversion[/yellow]")
+        for amp_file in amp_output_dir.glob("*_amp.pkl"):
+            amp_file.unlink()
+            print(f"  [dim]Removed: {amp_file.name}[/dim]")
+
+    contact_method = "FK" if mj_model else "heuristic"
     print(f"{'='*60}")
     print("Batch Convert GMR Motions to AMP Format & Merge")
     print(f"{'='*60}")
     print(f"Input:  {gmr_motion_dir}")
     print(f"Output: {amp_output_dir}")
     print(f"Merged: {merged_output}")
+    print(f"Contact: {contact_method}")
     print(f"{'='*60}")
 
     # Step 1: Convert all GMR motions to AMP format
@@ -261,6 +325,8 @@ def main():
         input_dir=gmr_motion_dir,
         output_dir=amp_output_dir,
         target_fps=args.target_fps,
+        mj_model=mj_model,
+        contact_height_threshold=args.contact_threshold,
     )
 
     if not amp_files:
