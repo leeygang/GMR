@@ -24,9 +24,11 @@ ROBOT_XML_DICT = {
     "pnd_adam_lite": ASSET_ROOT / "pnd_adam_lite" / "scene.xml",
     "tienkung": ASSET_ROOT / "tienkung" / "mjcf" / "tienkung.xml",
     "pal_talos": ASSET_ROOT / "pal_talos" / "talos.xml",
-    "wildrobot": pathlib.Path(
-        "/Users/ygli/projects/wildrobot/assets/scene_flat_terrain.xml"
-    ),
+    "wildrobot": pathlib.Path.home()
+    / "projects"
+    / "wildrobot"
+    / "assets"
+    / "scene_flat_terrain.xml",
 }
 
 IK_CONFIG_DICT = {
